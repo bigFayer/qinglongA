@@ -1,0 +1,24 @@
+name: 交割日提醒
+on:
+  schedule:
+    - cron: "0 0 * * *"  # 每天凌晨0点运行
+
+jobs:
+  check-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run script
+        env:
+          SERVERCHAN_SCKEY: ${{ secrets.SERVERCHAN_SCKEY }}  # 从GitHub Secrets获取
+        run: python check_delivery.py
