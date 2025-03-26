@@ -1,22 +1,47 @@
 name: 交割日提醒
 on:
   schedule:
-    - cron: "0 0 * * *"
-  workflow_dispatch:  # 这一行是关键！
+    - cron: "30 9 * * *"  # UTC时间9:30(北京时间17:30)
+    - cron: "1 16 * * *"  # UTC时间16:01(北京时间次日00:01)
+  
+  workflow_dispatch:
+    inputs:
+      days_ahead:
+        description: "提前多少天检查(默认2天)"
+        required: false
+        default: "2"
+        type: string
 
 jobs:
   check-delivery:
     runs-on: ubuntu-latest
+    name: 检查交割日并发送提醒
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
-      - name: Set up Python
+
+      - name: 设置Python环境
         uses: actions/setup-python@v4
         with:
-          python-version: "3.x"
-      - name: Install dependencies
+          python-version: "3.10"
+
+      - name: 安装依赖
         run: pip install requests
-      - name: Run script
+          
+      - name: 运行检查脚本
         env:
           SERVERCHAN_SCKEY: ${{ secrets.SERVERCHAN_SCKEY }}
-        run: python check_delivery.py
+          TZ: "Asia/Shanghai"
+        run: |
+          echo "当前UTC时间: $(date -u)"
+          echo "当前北京时间: $(TZ=Asia/Shanghai date)"
+          python check_delivery.py ${{ inputs.days_ahead || '2' }}
+          
+      - name: 上传日志(失败时)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-log
+          path: |
+            *.log
+            *.txt
