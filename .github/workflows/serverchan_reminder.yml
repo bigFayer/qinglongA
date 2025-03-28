@@ -1,7 +1,10 @@
 name: 交割日提醒
+
 on:
   schedule:
-    - cron: "0 * * * *"  # 每小时整点（UTC）
+    # 每天UTC时间0点运行（北京时间8点）
+    - cron: "0 0 * * *"  # 关键修改：从 "0 * * * *"（每小时）改为 "0 0 * * *"（每天UTC 0点）
+
   workflow_dispatch:
     inputs:
       days_ahead:
@@ -17,7 +20,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}  # 显式声明权限
+          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: 设置Python环境
