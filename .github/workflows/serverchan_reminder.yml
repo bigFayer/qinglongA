@@ -1,8 +1,7 @@
 name: 交割日提醒
 on:
   schedule:
-    - cron: "0 * * * *"  # 每小时的第0分钟运行（UTC时间）
-  
+    - cron: "0 * * * *"  # 每小时整点（UTC）
   workflow_dispatch:
     inputs:
       days_ahead:
@@ -14,10 +13,12 @@ on:
 jobs:
   check-delivery:
     runs-on: ubuntu-latest
-    name: 检查交割日并发送提醒
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # 显式声明权限
+          fetch-depth: 0
 
       - name: 设置Python环境
         uses: actions/setup-python@v4
@@ -26,7 +27,7 @@ jobs:
 
       - name: 安装依赖
         run: pip install requests
-          
+
       - name: 运行检查脚本
         env:
           SERVERCHAN_SCKEY: ${{ secrets.SERVERCHAN_SCKEY }}
@@ -35,7 +36,7 @@ jobs:
           echo "当前UTC时间: $(date -u)"
           echo "当前北京时间: $(TZ=Asia/Shanghai date)"
           python check_delivery.py ${{ inputs.days_ahead || '2' }}
-          
+
       - name: 上传日志(失败时)
         if: failure()
         uses: actions/upload-artifact@v4
