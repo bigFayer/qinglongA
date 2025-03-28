@@ -1,7 +1,7 @@
 name: 交割日提醒
 on:
   schedule:
-    - cron: "0 2 * * *"  # UTC时间2:00(北京时间10:00)
+    - cron: "0 * * * *"  # 每小时的第0分钟运行（UTC时间）
   
   workflow_dispatch:
     inputs:
