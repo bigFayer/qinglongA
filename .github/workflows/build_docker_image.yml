@@ -1,100 +1,85 @@
-# 工作流名称
-name: 交割日提醒 (每小时)
+name: 交割日提醒 (北京时间每天8点)
 
-# 触发工作流的事件
 on:
   schedule:
-    # 每小时的第 0 分钟触发一次 (例如 00:00, 01:00, 02:00 ... UTC 时间)
-    # 注意：GitHub Actions 的 schedule 触发可能有几分钟延迟
-    - cron: "0 * * * *"
+    # UTC 0:00 = 北京时间 8:00
+    - cron: "0 0 * * *"
 
-  # 允许手动触发工作流
   workflow_dispatch:
     inputs:
       days_ahead:
-        description: "提前多少天检查 (默认值: 2)" # 输入描述
-        required: false             # 非必填
-        default: "2"                # 默认值
-        type: string                # 输入类型为字符串 (Python脚本会处理转换)
+        description: "提前多少天检查 (默认值: 2)"
+        required: false
+        default: "2"
+        type: string
 
-# 定义工作流中的作业
 jobs:
-  # 作业 ID
   check-delivery:
-    # 作业运行的环境
     runs-on: ubuntu-latest
-    # 作业在 GitHub UI 中显示的名称
     name: 检查交割日并发送提醒
 
-    # 为此作业中的所有 run 步骤设置默认值
     defaults:
       run:
-        shell: bash # 使用 bash 作为默认 shell
+        shell: bash
 
-    # 作业包含的步骤
     steps:
-      # 第 1 步：检出仓库代码
       - name: 检出代码
-        # 使用官方的 checkout action
         uses: actions/checkout@v4
 
-      # 第 2 步：设置 Python 环境
       - name: 设置 Python 环境
-        # 使用官方的 setup-python action
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"   # 指定要使用的 Python 版本
-          cache: 'pip'             # 启用 pip 依赖缓存，加快后续构建速度
+          python-version: "3.10"
+          cache: 'pip'
 
-      # 第 3 步：安装 Python 依赖
       - name: 安装 Python 依赖
         run: |
-          # 升级 pip 工具自身
           python -m pip install --upgrade pip
-          # 检查 requirements.txt 文件是否存在
-          # 最佳实践：在仓库根目录创建 requirements.txt 文件，列出所有依赖（如 requests）
           if [ -f requirements.txt ]; then
-            echo "发现 requirements.txt，开始安装依赖..."
-            # 从 requirements.txt 文件安装依赖
             pip install -r requirements.txt
           else
-            # 如果 requirements.txt 不存在，打印警告并仅安装 requests 作为后备
-            echo "警告：未找到 requirements.txt 文件。将直接安装 'requests' 库。"
-            pip install requests
+            pip install requests python-dateutil
           fi
 
-      # 第 4 步：运行 Python 检查脚本
-      - name: 运行检查脚本
-        # 设置环境变量供 Python 脚本使用
-        env:
-          # 从仓库的 Secrets 中读取 ServerChan 的 SCKEY
-          SERVERCHAN_SCKEY: ${{ secrets.SERVERCHAN_SCKEY }}
-          # 设置时区为亚洲/上海，确保脚本内时间相关操作基于北京时间
-          TZ: "Asia/Shanghai"
+      - name: 运行交割日检查脚本
         run: |
-          # 打印当前 UTC 时间和北京时间，方便调试
-          echo "当前 UTC 时间: $(date -u)"
-          echo "当前北京时间: $(TZ=Asia/Shanghai date)"
-          # 获取手动触发时输入的 days_ahead 值，若未提供或非手动触发，则使用默认值 '2'
-          DAYS_AHEAD="${{ github.event.inputs.days_ahead || '2' }}"
-          echo "运行检查脚本，参数 days_ahead = $DAYS_AHEAD"
-          # 执行 Python 脚本，并将提前检查天数作为命令行参数传递
-          python check_delivery.py "$DAYS_AHEAD"
+          # 这里替换成你的 Python 脚本
+          python3 -c "
+import requests
+from datetime import datetime, timedelta
+import os
 
-      # 第 5 步：上传错误日志 (仅当作业失败时运行)
-      - name: 上传错误日志 (失败时)
-        # 'if: failure()' 确保此步骤仅在之前任何步骤失败时执行
-        if: failure()
-        # 使用官方的 upload-artifact action
-        uses: actions/upload-artifact@v4
-        with:
-          # 上传的产物名称，包含 GitHub Run ID 以保证唯一性
-          name: error-log-${{ github.run_id }}
-          # 需要上传的文件路径模式
-          # 推荐：修改 Python 脚本，将日志输出到特定文件（如 check_delivery.log）
-          # 然后将 path 设置为该特定文件名，例如：path: ./check_delivery.log
-          path: |
-            ./*.log
-            ./*.txt
-          # 产物保留天数，之后会自动删除
-          retention-days: 7
+# 获取输入参数（手动触发时可用）
+days_ahead = int(os.getenv('INPUT_DAYS_AHEAD', '2'))
+
+# 获取当前时间（UTC+8 北京时间）
+now = datetime.utcnow() + timedelta(hours=8)
+today = now.date()
+
+# 检查未来几天是否是交割日（示例逻辑）
+def is_delivery_day(date):
+    # 这里替换成你的交割日判断逻辑
+    # 示例：假设每月第3个周五是交割日
+    if date.weekday() == 4 and 15 <= date.day <= 21:
+        return True
+    return False
+
+# 检查未来几天
+reminder_days = []
+for i in range(days_ahead + 1):
+    check_date = today + timedelta(days=i)
+    if is_delivery_day(check_date):
+        reminder_days.append(check_date.strftime('%Y-%m-%d'))
+
+# 如果有交割日，发送提醒（示例：通过 Webhook）
+if reminder_days:
+    webhook_url = 'https://your-webhook-url.example.com'
+    message = f'⚠️ 交割日提醒：未来{days_ahead}天内有以下交割日：{", ".join(reminder_days)}'
+    payload = {'text': message}
+    requests.post(webhook_url, json=payload)
+    print('已发送提醒:', message)
+else:
+    print(f'未来{days_ahead}天内无交割日')
+          "
+        env:
+          INPUT_DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '2' }}
