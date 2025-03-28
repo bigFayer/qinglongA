@@ -1,239 +1,100 @@
-name: Build And Push Docker Image
+# 工作流名称
+name: 交割日提醒 (每小时)
 
+# 触发工作流的事件
 on:
-  push:
-    paths-ignore:
-      - "*.md"
-    branches:
-      - "master"
-      - "develop"
-    tags:
-      - "v*"
   schedule:
-    - cron: "00 20 * * *"
+    # 每小时的第 0 分钟触发一次 (例如 00:00, 01:00, 02:00 ... UTC 时间)
+    # 注意：GitHub Actions 的 schedule 触发可能有几分钟延迟
+    - cron: "0 * * * *"
+
+  # 允许手动触发工作流
   workflow_dispatch:
+    inputs:
+      days_ahead:
+        description: "提前多少天检查 (默认值: 2)" # 输入描述
+        required: false             # 非必填
+        default: "2"                # 默认值
+        type: string                # 输入类型为字符串 (Python脚本会处理转换)
 
+# 定义工作流中的作业
 jobs:
-  to_gitlab:
+  # 作业 ID
+  check-delivery:
+    # 作业运行的环境
     runs-on: ubuntu-latest
+    # 作业在 GitHub UI 中显示的名称
+    name: 检查交割日并发送提醒
+
+    # 为此作业中的所有 run 步骤设置默认值
+    defaults:
+      run:
+        shell: bash # 使用 bash 作为默认 shell
+
+    # 作业包含的步骤
     steps:
-      - uses: actions/checkout@v4
+      # 第 1 步：检出仓库代码
+      - name: 检出代码
+        # 使用官方的 checkout action
+        uses: actions/checkout@v4
+
+      # 第 2 步：设置 Python 环境
+      - name: 设置 Python 环境
+        # 使用官方的 setup-python action
+        uses: actions/setup-python@v4
         with:
-          fetch-depth: 0
-      - uses: wearerequired/git-mirror-action@v1
+          python-version: "3.10"   # 指定要使用的 Python 版本
+          cache: 'pip'             # 启用 pip 依赖缓存，加快后续构建速度
+
+      # 第 3 步：安装 Python 依赖
+      - name: 安装 Python 依赖
+        run: |
+          # 升级 pip 工具自身
+          python -m pip install --upgrade pip
+          # 检查 requirements.txt 文件是否存在
+          # 最佳实践：在仓库根目录创建 requirements.txt 文件，列出所有依赖（如 requests）
+          if [ -f requirements.txt ]; then
+            echo "发现 requirements.txt，开始安装依赖..."
+            # 从 requirements.txt 文件安装依赖
+            pip install -r requirements.txt
+          else
+            # 如果 requirements.txt 不存在，打印警告并仅安装 requests 作为后备
+            echo "警告：未找到 requirements.txt 文件。将直接安装 'requests' 库。"
+            pip install requests
+          fi
+
+      # 第 4 步：运行 Python 检查脚本
+      - name: 运行检查脚本
+        # 设置环境变量供 Python 脚本使用
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PK }}
-        with:
-          source-repo: https://github.com/whyour/qinglong.git
-          destination-repo: git@gitlab.com:whyour/qinglong.git
-
-  to_gitee:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: wearerequired/git-mirror-action@v1
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PK }}
-        with:
-          source-repo: https://github.com/whyour/qinglong.git
-          destination-repo: git@gitee.com:whyour/qinglong.git
-
-  build-static:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with:
-          version: "8.3.1"
-
-      - uses: actions/setup-node@v4
-        with:
-          cache: "pnpm"
-
-      - name: build front and back
+          # 从仓库的 Secrets 中读取 ServerChan 的 SCKEY
+          SERVERCHAN_SCKEY: ${{ secrets.SERVERCHAN_SCKEY }}
+          # 设置时区为亚洲/上海，确保脚本内时间相关操作基于北京时间
+          TZ: "Asia/Shanghai"
         run: |
-          pnpm install --frozen-lockfile
-          pnpm build:front
-          pnpm build:back
+          # 打印当前 UTC 时间和北京时间，方便调试
+          echo "当前 UTC 时间: $(date -u)"
+          echo "当前北京时间: $(TZ=Asia/Shanghai date)"
+          # 获取手动触发时输入的 days_ahead 值，若未提供或非手动触发，则使用默认值 '2'
+          DAYS_AHEAD="${{ github.event.inputs.days_ahead || '2' }}"
+          echo "运行检查脚本，参数 days_ahead = $DAYS_AHEAD"
+          # 执行 Python 脚本，并将提前检查天数作为命令行参数传递
+          python check_delivery.py "$DAYS_AHEAD"
 
-      - name: copy to static repo
-        env:
-          GITHUB_REPO: github.com/${{ github.repository_owner }}/qinglong-static
-          GITHUB_BRANCH: ${{ github.ref_name }}
-          REPO_GITEE: git@gitee.com:whyour/qinglong-static.git
-          REPO_GITLAB: git@gitlab.com:whyour/qinglong-static.git
-          PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PK }}
-        run: |
-          mkdir -p tmp
-          cd ./tmp
-          cp -rf ../static/* ./
-          git init -b ${GITHUB_BRANCH} && git add .
-          git config --local user.name 'github-actions[bot]'
-          git config --local user.email 'github-actions[bot]@users.noreply.github.com'
-          git commit --allow-empty -m "copy static at $(date +'%Y-%m-%d %H:%M:%S')"
-          git push --force --quiet "https://${{ secrets.API_TOKEN }}@${GITHUB_REPO}.git" ${GITHUB_BRANCH}:${GITHUB_BRANCH}
-
-          mkdir -p ~/.ssh
-          echo "${PRIVATE_KEY}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-          export GIT_SSH_COMMAND="ssh -v -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -l git"
-          git remote add gitee "${REPO_GITEE}"
-          git remote add gitlab "${REPO_GITLAB}"
-          git gc
-          git push --force --quiet gitee ${GITHUB_BRANCH}:${GITHUB_BRANCH}
-          git push --force --quiet gitlab ${GITHUB_BRANCH}:${GITHUB_BRANCH}
-
-  build:
-    needs: build-static
-
-    # 由于 ubuntu-latest 中使用 linux6.x 内核 linux/s390x npm 无法使用
-    runs-on: ubuntu-20.04
-    # runs-on: self-hosted
-
-    permissions:
-      packages: write
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
+      # 第 5 步：上传错误日志 (仅当作业失败时运行)
+      - name: 上传错误日志 (失败时)
+        # 'if: failure()' 确保此步骤仅在之前任何步骤失败时执行
+        if: failure()
+        # 使用官方的 upload-artifact action
+        uses: actions/upload-artifact@v4
         with:
-          version: "8.3.1"
-      - uses: actions/setup-node@v4
-        with:
-          cache: "pnpm"
-
-      - name: Setup timezone
-        uses: szenius/set-timezone@v2.0
-        with:
-          timezoneLinux: Asia/Shanghai
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ github.repository }}
-            ghcr.io/${{ github.repository }}
-          # generate Docker tags based on the following events/attributes
-          #   nightly, master, pr-2, 1.2.3, 1.2, 1
-          flavor: |
-            latest=false
-          tags: |
-            type=schedule,pattern=nightly
-            type=edge
-            type=ref,event=pr
-            type=ref,event=branch,enable=${{ github.ref != format('refs/heads/{0}', 'master') }}
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v6
-        with:
-          build-args: |
-            MAINTAINER=${{ github.repository_owner }}
-            QL_BRANCH=${{ github.ref_name }}
-            SOURCE_COMMIT=${{ github.sha }}
-          network: host
-          platforms: linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/ppc64le,linux/s390x,linux/386
-          # platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/386
-          context: .
-          file: ./docker/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=whyour/qinglong:cache
-          cache-to: type=registry,ref=whyour/qinglong:cache,mode=max
-
-      - name: Image digest
-        run: |
-          echo ${{ steps.docker_build.outputs.digest }}
-  
-  build310:
-    if: ${{ github.ref_name == 'master' }}
-    needs: build-static
-
-    runs-on: ubuntu-20.04
-
-    permissions:
-      packages: write
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with:
-          version: "8.3.1"
-      - uses: actions/setup-node@v4
-        with:
-          cache: "pnpm"
-
-      - name: Setup timezone
-        uses: szenius/set-timezone@v2.0
-        with:
-          timezoneLinux: Asia/Shanghai
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push python3.10
-        id: docker_build_310
-        uses: docker/build-push-action@v6
-        with:
-          build-args: |
-            MAINTAINER=${{ github.repository_owner }}
-            QL_BRANCH=${{ github.ref_name }}
-            SOURCE_COMMIT=${{ github.sha }}
-          network: host
-          platforms: linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/ppc64le,linux/s390x,linux/386
-          context: .
-          file: ./docker/310.Dockerfile
-          push: true
-          tags: whyour/qinglong:python3.10
-          cache-from: type=registry,ref=whyour/qinglong:cache-python3.10
-          cache-to: type=registry,ref=whyour/qinglong:cache-python3.10,mode=max
-
-      - name: Image digest
-        run: |
-          echo ${{ steps.docker_build_310.outputs.digest }}
+          # 上传的产物名称，包含 GitHub Run ID 以保证唯一性
+          name: error-log-${{ github.run_id }}
+          # 需要上传的文件路径模式
+          # 推荐：修改 Python 脚本，将日志输出到特定文件（如 check_delivery.log）
+          # 然后将 path 设置为该特定文件名，例如：path: ./check_delivery.log
+          path: |
+            ./*.log
+            ./*.txt
+          # 产物保留天数，之后会自动删除
+          retention-days: 7
